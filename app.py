@@ -546,7 +546,118 @@ def onglet_import():
         else:
             st.success("✅ Traitement terminé !")
 
-    # ── Import depuis fichier MP4 local ───────────────────────────────────
+    # ── Import depuis dossier local (data/imports/) ─────────────────────
+    st.divider()
+    st.subheader("📁 Importer depuis le dossier local")
+    st.caption("Place tes fichiers MP4 dans le dossier **`data/imports/`** puis clique sur Importer.")
+
+    dossier_imports = os.path.join(
+        config.get("chemins", {}).get("base", "data"), "imports"
+    )
+    os.makedirs(dossier_imports, exist_ok=True)
+
+    # Scanner les MP4 dans le dossier
+    mp4_dans_dossier = sorted([
+        f for f in os.listdir(dossier_imports)
+        if f.lower().endswith(".mp4") and os.path.isfile(os.path.join(dossier_imports, f))
+    ])
+
+    if mp4_dans_dossier:
+        st.info(f"**{len(mp4_dans_dossier)}** fichier(s) MP4 trouvé(s) dans `data/imports/`")
+
+        # Afficher la liste
+        for nom in mp4_dans_dossier:
+            taille = os.path.getsize(os.path.join(dossier_imports, nom)) / (1024 ** 2)
+            st.write(f"- **{nom}** ({taille:.1f} Mo)")
+
+        col_imp_a, col_imp_b = st.columns([2, 1])
+        with col_imp_a:
+            titre_dossier = st.text_input(
+                "Titre commun (optionnel)",
+                placeholder="Ex: Compilation humour",
+                key="titre_dossier_import"
+            )
+        with col_imp_b:
+            categorie_dossier = st.selectbox(
+                "Catégorie",
+                options=["humour", "musique", "sport", "autre"],
+                format_func=lambda x: {
+                    "humour": "😂 Humour", "musique": "🎵 Musique",
+                    "sport": "⚽ Sport", "autre": "🎬 Autre",
+                }.get(x, x),
+                key="cat_dossier_import"
+            )
+            traiter_auto_dossier = st.checkbox("Traiter automatiquement", value=True, key="traiter_dossier")
+
+        pipeline_actif_dossier = st.session_state.get("pipeline_en_cours", False)
+        if pipeline_actif_dossier:
+            st.warning("⚠️ Un traitement est déjà en cours.")
+
+        if st.button(
+            f"⬆️ Importer {len(mp4_dans_dossier)} fichier(s) depuis le dossier",
+            type="primary", use_container_width=True, disabled=pipeline_actif_dossier
+        ):
+            dossier_dl = config.get("chemins", {}).get("downloads", "data/downloads")
+            os.makedirs(dossier_dl, exist_ok=True)
+            video_ids_dossier = []
+
+            for nom_mp4 in mp4_dans_dossier:
+                chemin_src = os.path.join(dossier_imports, nom_mp4)
+                nom_base = re.sub(r"[^\w\s-]", "", os.path.splitext(nom_mp4)[0], flags=re.UNICODE)
+                nom_base = re.sub(r"\s+", "_", nom_base.strip())[:50]
+                date_str = datetime.now().strftime("%Y%m%d")
+                nom_dest = f"{date_str}_local_{nom_base}.mp4"
+                chemin_dest = os.path.join(dossier_dl, nom_dest)
+
+                # Déplacer (pas copier) vers downloads
+                import shutil
+                shutil.move(chemin_src, chemin_dest)
+                taille_mo = os.path.getsize(chemin_dest) / (1024 ** 2)
+
+                # Durée via ffprobe
+                duree = 0
+                try:
+                    import subprocess as _sp
+                    _res = _sp.run(
+                        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", chemin_dest],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    _info = json.loads(_res.stdout)
+                    duree = float(_info.get("format", {}).get("duration", 0))
+                except Exception:
+                    pass
+
+                titre_final = titre_dossier.strip() or os.path.splitext(nom_mp4)[0]
+                metadata = {
+                    "url": "",
+                    "platform": "local",
+                    "title": titre_final if len(mp4_dans_dossier) == 1 else f"{titre_final} — {nom_base}",
+                    "description": titre_final,
+                    "duration": duree,
+                    "uploader": "local",
+                    "upload_date": date_str,
+                    "categorie": categorie_dossier,
+                }
+
+                chemin_json = os.path.splitext(chemin_dest)[0] + ".json"
+                with open(chemin_json, "w", encoding="utf-8") as f:
+                    json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+                video_id = str(uuid.uuid4())[:8] + "_" + nom_base[:20]
+                state.enregistrer_video(video_id, chemin_dest, metadata)
+                state.enregistrer_categorie(video_id, categorie_dossier)
+                video_ids_dossier.append(video_id)
+
+                st.success(f"✅ {nom_mp4} — {taille_mo:.0f} Mo — {int(duree//60)}:{int(duree%60):02d}")
+
+            if traiter_auto_dossier and video_ids_dossier:
+                st.info("🔄 Lancement du traitement automatique...")
+                lancer_pipeline(video_ids_dossier)
+
+    else:
+        st.write("Aucun fichier MP4 dans `data/imports/`. Place-y tes vidéos pour les importer.")
+
+    # ── Import depuis fichier MP4 local (upload navigateur) ───────────────
     st.divider()
     st.subheader("📂 Importer un fichier MP4 local")
 
