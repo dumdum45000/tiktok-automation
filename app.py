@@ -22,12 +22,20 @@ from typing import Dict, List, Optional
 
 import streamlit as st
 
-# ─── Chargement des variables d'environnement (.env) ─────────────────────────
+# ─── Chargement des variables d'environnement (.env + st.secrets) ─────────────
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass  # python-dotenv optionnel
+
+# Streamlit Community Cloud : injecter st.secrets dans os.environ
+try:
+    for key, value in st.secrets.items():
+        if isinstance(value, str) and key not in os.environ:
+            os.environ[key] = value
+except Exception:
+    pass  # Pas de secrets configurés ou en local
 
 # ─── Répertoire de travail : toujours le dossier de l'app ────────────────────
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))

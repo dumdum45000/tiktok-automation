@@ -63,8 +63,8 @@
     "max_chars_par_ligne": 35,
     "epaisseur_contour": 3,
     "seuil_luminosite": 128,
-    "chemin_modele": "/Users/dumdum45/.whisper-cpp/models/ggml-base.en.bin",
-    "chemin_modele_tiny": "/Users/dumdum45/.whisper-cpp/models/ggml-tiny.en.bin"
+    "chemin_modele": "~/.whisper-cpp/models/ggml-base.en.bin",
+    "chemin_modele_tiny": "~/.whisper-cpp/models/ggml-tiny.en.bin"
   },
   "musique": {
     "volume_fond_normal": 0.08,

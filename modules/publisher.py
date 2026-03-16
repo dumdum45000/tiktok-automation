@@ -431,16 +431,22 @@ class PlaywrightPublisher:
                 vp_w = random.randint(1240, 1400)
                 vp_h = random.randint(780, 860)
 
-                # Chrome for Testing (Playwright) — support WASM/SIMD complet pour clip-forge
-                chrome_path = (
-                    "/Users/dumdum45/Library/Caches/ms-playwright/chromium-1208"
+                # Chrome for Testing (Playwright) — détection dynamique du navigateur
+                import shutil
+                chrome_path = None
+                # macOS : chemin Playwright par défaut
+                mac_path = os.path.expanduser(
+                    "~/Library/Caches/ms-playwright/chromium-1208"
                     "/chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS"
                     "/Google Chrome for Testing"
                 )
-                browser = p.chromium.launch_persistent_context(
-                    dossier_profil,
+                if os.path.exists(mac_path):
+                    chrome_path = mac_path
+                elif shutil.which("chromium") or shutil.which("chromium-browser"):
+                    chrome_path = shutil.which("chromium") or shutil.which("chromium-browser")
+
+                launch_kwargs = dict(
                     headless=False,
-                    executable_path=chrome_path,
                     args=[
                         "--disable-blink-features=AutomationControlled",
                         "--no-sandbox",
@@ -451,13 +457,16 @@ class PlaywrightPublisher:
                         "--no-default-browser-check",
                         "--password-store=basic",
                         "--use-mock-keychain",
-                        # GPU désactivé — clip-forge GPU exhaustait la VRAM → crash renderer
-                        # CPU-only : clip-forge prend 2-5 min (vs 5s GPU) mais Chrome stable
-                        # Phase 2 polling (10 min) couvre le temps de traitement CPU
                         "--disable-gpu",
                     ],
                     viewport={"width": vp_w, "height": vp_h},
                     ignore_https_errors=True,
+                )
+                if chrome_path:
+                    launch_kwargs["executable_path"] = chrome_path
+
+                browser = p.chromium.launch_persistent_context(
+                    dossier_profil, **launch_kwargs
                 )
 
                 page = browser.pages[0] if browser.pages else browser.new_page()
