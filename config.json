@@ -1,5 +1,13 @@
 {
   "_commentaire": "Fichier de configuration de TikTok Automation — modifier selon vos besoins",
+  "compte_actif": "principal",
+  "comptes": [
+    {
+      "id": "principal",
+      "nom": "divertissement45000",
+      "tiktok_username": "@divertissement45000"
+    }
+  ],
   "identite": {
     "nom_chaine": "divertissement45000",
     "tiktok_username": "@divertissement45000"
@@ -135,6 +143,9 @@
     "max_retries": 3,
     "delai_retry_secondes": 30,
     "methode": "playwright",
+    "mode_scheduling": "intelligent",
+    "creneaux_optimaux": ["12:00", "18:00", "21:00"],
+    "max_clips_par_creneau": 3,
     "tiktok_credentials": {
       "email": "",
       "password": ""
@@ -145,6 +156,19 @@
       "access_token": "",
       "refresh_token": ""
     }
+  },
+  "trending": {
+    "actif": true,
+    "cache_duree_heures": 6,
+    "max_trending_hashtags": 5
+  },
+  "anti_ban": {
+    "actif": true,
+    "limite_quotidienne": 10,
+    "fenetre_activite": ["08:00", "23:00"],
+    "cooldown_echecs_consecutifs": 2,
+    "pattern_weekend": true,
+    "limite_quotidienne_weekend": 6
   },
   "performance": {
     "traitement_parallele": true,

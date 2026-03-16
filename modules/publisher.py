@@ -904,6 +904,17 @@ class PublicationScheduler:
         self.delai_retry = cfg_pub.get("delai_retry_secondes", 30)
         self.methode = cfg_pub.get("methode", "api")
 
+        # Système anti-ban
+        from modules.anti_ban import AntiBanManager
+        self.anti_ban = AntiBanManager(config)
+        # Restaurer les compteurs depuis l'état persisté
+        stats = self.state.get_statistiques()
+        self.anti_ban.charger_depuis_state(stats)
+
+        # Engagement tracker
+        from modules.engagement_tracker import EngagementTracker
+        self.engagement_tracker = EngagementTracker(config, self.state)
+
     def _log(self, msg: str):
         logger.info(msg)
         if self.callback_ui:
@@ -972,6 +983,19 @@ class PublicationScheduler:
             if succes:
                 self.state.mettre_a_jour_statut_publication(clip_id, "succes", message)
                 self.state.ajouter_historique("publication_succes", {"clip_id": clip_id})
+                self.anti_ban.enregistrer_publication()
+                self.anti_ban.sauvegarder_dans_state(self.state.get_statistiques())
+                # Planifier la collecte d'engagement si un publish_id est disponible
+                if message and "publish_id" in message.lower():
+                    # Extraire publish_id du message de l'API
+                    try:
+                        import re
+                        match = re.search(r'publish_id[:\s]+(\S+)', message, re.IGNORECASE)
+                        if match:
+                            self.engagement_tracker.planifier_collecte(clip_id, match.group(1))
+                    except Exception:
+                        pass
+                self.state.sauvegarder()
                 # Nettoyage des fichiers intermédiaires si activé
                 if self.config.get("disque", {}).get("nettoyage_actif", False):
                     try:
@@ -983,6 +1007,9 @@ class PublicationScheduler:
                 return {"statut": "succes", "clip_id": clip_id, "message": message}
             else:
                 nb_tentatives = self.state.incrementer_tentatives(clip_id)
+                self.anti_ban.enregistrer_echec()
+                self.anti_ban.sauvegarder_dans_state(self.state.get_statistiques())
+                self.state.sauvegarder()
                 self._log(f"❌ Échec tentative {tentative} : {message}")
                 notifier_publication_echec(nom_clip, tentative, self.max_retries)
 
@@ -1003,6 +1030,9 @@ class PublicationScheduler:
         from modules.notifications import notifier_publication_terminee
 
         self._log(f"🚀 Démarrage publication automatique — 1 clip toutes les {self.intervalle_minutes} min")
+        statut_ab = self.anti_ban.get_statut()
+        if statut_ab["actif"]:
+            self._log(f"🛡️ Anti-ban actif : {statut_ab['restant']}/{statut_ab['limite']} publications restantes, fenêtre {statut_ab['fenetre']}")
 
         nb_succes = 0
         nb_echecs = 0
@@ -1013,6 +1043,23 @@ class PublicationScheduler:
             if prochain is None:
                 self._log("✅ File de publication vide — arrêt de la boucle")
                 break
+
+            # Collecte d'engagement en arrière-plan
+            try:
+                self.engagement_tracker.executer_collectes_en_attente()
+            except Exception as e:
+                logger.debug(f"Engagement collecte : {e}")
+
+            # Vérification anti-ban avant publication
+            autorise, raison = self.anti_ban.peut_publier()
+            if not autorise:
+                self._log(f"🛡️ Anti-ban : publication bloquée — {raison}")
+                # Attendre 60s puis revérifier
+                for _ in range(60):
+                    if self._stop_event.is_set():
+                        break
+                    time.sleep(1)
+                continue
 
             resultat = self.publier_prochain()
 
@@ -1026,24 +1073,25 @@ class PublicationScheduler:
             if prochain is None:
                 break
 
-            # Attendre jusqu'à l'heure prévue du prochain clip
-            delai_attente = int(self.intervalle_minutes * 60)
+            # Délai anti-ban randomisé ou basé sur heure prévue
+            delai_attente = int(self.anti_ban.calculer_delai())
             heure_prevue_str = prochain.get("heure_prevue")
             if heure_prevue_str:
                 try:
                     heure_prevue = datetime.fromisoformat(heure_prevue_str)
                     maintenant = datetime.now()
                     if heure_prevue > maintenant:
-                        delai_attente = int((heure_prevue - maintenant).total_seconds())
+                        delai_heure = int((heure_prevue - maintenant).total_seconds())
+                        # Prendre le plus grand des deux délais
+                        delai_attente = max(delai_attente, delai_heure)
                         self._log(f"Prochain clip prévu à {heure_prevue.strftime('%H:%M:%S')} (dans {delai_attente}s)")
                     else:
                         retard = int((maintenant - heure_prevue).total_seconds())
-                        self._log(f"Clip en retard de {retard}s — publication immédiate")
-                        delai_attente = 0
+                        self._log(f"Clip en retard de {retard}s — publication avec délai anti-ban ({delai_attente}s)")
                 except (ValueError, TypeError):
-                    self._log(f"Heure prévue invalide — attente par défaut ({delai_attente}s)")
+                    self._log(f"Heure prévue invalide — délai anti-ban ({delai_attente}s)")
             else:
-                self._log(f"Prochain clip dans {delai_attente}s")
+                self._log(f"Prochain clip dans {delai_attente}s (délai randomisé)")
 
             for _ in range(delai_attente):
                 if self._stop_event.is_set():
@@ -1090,15 +1138,55 @@ class PublicationScheduler:
         if intervalle_minutes:
             self.intervalle_minutes = intervalle_minutes
 
+        cfg_pub = self.config.get("publication", {})
+        mode = cfg_pub.get("mode_scheduling", "fixe")
+
         file = self.state.get_file_publication()
         maintenant = datetime.now()
         compteur = 0
 
-        for entree in file:
-            if entree.get("statut") == "en_attente":
-                heure_prevue = maintenant + timedelta(minutes=self.intervalle_minutes * compteur)
-                entree["heure_prevue"] = heure_prevue.isoformat()
-                compteur += 1
+        if mode == "intelligent":
+            # Redistribuer sur les créneaux optimaux
+            creneaux = cfg_pub.get("creneaux_optimaux", ["12:00", "18:00", "21:00"])
+            max_par_creneau = cfg_pub.get("max_clips_par_creneau", 3)
+
+            from datetime import time as dtime
+            creneaux_parsed = []
+            for c in creneaux:
+                try:
+                    parts = c.strip().split(":")
+                    creneaux_parsed.append(dtime(int(parts[0]), int(parts[1])))
+                except (ValueError, IndexError):
+                    continue
+            creneaux_parsed.sort()
+
+            if creneaux_parsed:
+                # Générer les slots disponibles
+                slots = []
+                for jour_offset in range(14):
+                    jour = (maintenant + timedelta(days=jour_offset)).date()
+                    for creneau in creneaux_parsed:
+                        slot_dt = datetime.combine(jour, creneau)
+                        if slot_dt > maintenant:
+                            for _ in range(max_par_creneau):
+                                slots.append(slot_dt)
+
+                # Assigner les clips aux slots
+                slot_idx = 0
+                for entree in file:
+                    if entree.get("statut") == "en_attente" and slot_idx < len(slots):
+                        entree["heure_prevue"] = slots[slot_idx].isoformat()
+                        compteur += 1
+                        slot_idx += 1
+            else:
+                mode = "fixe"  # Fallback
+
+        if mode == "fixe":
+            for entree in file:
+                if entree.get("statut") == "en_attente":
+                    heure_prevue = maintenant + timedelta(minutes=self.intervalle_minutes * compteur)
+                    entree["heure_prevue"] = heure_prevue.isoformat()
+                    compteur += 1
 
         self.state.sauvegarder()
-        self._log(f"Horaires recalculés pour {compteur} clip(s) en attente")
+        self._log(f"Horaires recalculés pour {compteur} clip(s) en attente (mode {mode})")

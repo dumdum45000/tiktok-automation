@@ -119,14 +119,41 @@ def sauvegarder_config(config: Dict):
 
 # ─── Initialisation de l'état Streamlit ──────────────────────────────────────
 
+def _get_state_path_for_account(compte_id: str) -> str:
+    """Retourne le chemin du fichier d'état pour un compte donné."""
+    if not compte_id or compte_id == "principal":
+        return os.path.join(_APP_DIR, "pipeline_state.json")
+    return os.path.join(_APP_DIR, f"pipeline_state_{compte_id}.json")
+
+
+def get_compte_actif(config: Dict) -> Dict:
+    """Retourne la config du compte actif, avec fallback sur l'identité globale."""
+    compte_id = config.get("compte_actif", "principal")
+    comptes = config.get("comptes", [])
+    for c in comptes:
+        if c.get("id") == compte_id:
+            return c
+    # Fallback : créer un compte à partir de l'identité globale
+    identite = config.get("identite", {})
+    return {
+        "id": "principal",
+        "nom": identite.get("nom_chaine", "Mon compte"),
+        "tiktok_username": identite.get("tiktok_username", ""),
+    }
+
+
 def init_session():
     """Initialise les variables de session Streamlit."""
-    if "state_manager" not in st.session_state:
-        from modules.state_manager import StateManager
-        st.session_state.state_manager = StateManager(os.path.join(_APP_DIR, "pipeline_state.json"))
-
     if "config" not in st.session_state:
         st.session_state.config = charger_config()
+
+    if "compte_actif" not in st.session_state:
+        st.session_state.compte_actif = st.session_state.config.get("compte_actif", "principal")
+
+    if "state_manager" not in st.session_state:
+        from modules.state_manager import StateManager
+        state_path = _get_state_path_for_account(st.session_state.compte_actif)
+        st.session_state.state_manager = StateManager(state_path)
 
     if "logs_pipeline" not in st.session_state:
         st.session_state.logs_pipeline = []
@@ -159,7 +186,37 @@ def afficher_sidebar():
     """Sidebar avec info espace disque et statut général."""
     with st.sidebar:
         st.title("🎬 TikTok Auto")
-        st.caption("divertissement45000")
+
+        # Sélecteur de compte
+        config = st.session_state.config
+        comptes = config.get("comptes", [])
+        if len(comptes) > 1:
+            noms_comptes = {c["id"]: c.get("nom", c["id"]) for c in comptes}
+            compte_ids = list(noms_comptes.keys())
+            idx_actuel = 0
+            if st.session_state.compte_actif in compte_ids:
+                idx_actuel = compte_ids.index(st.session_state.compte_actif)
+            choix = st.selectbox(
+                "Compte",
+                compte_ids,
+                index=idx_actuel,
+                format_func=lambda x: noms_comptes.get(x, x),
+                key="sidebar_compte"
+            )
+            if choix != st.session_state.compte_actif:
+                st.session_state.compte_actif = choix
+                config["compte_actif"] = choix
+                sauvegarder_config(config)
+                # Réinitialiser le state manager et le scheduler pour le nouveau compte
+                from modules.state_manager import StateManager
+                state_path = _get_state_path_for_account(choix)
+                st.session_state.state_manager = StateManager(state_path)
+                st.session_state.scheduler = None
+                st.rerun()
+        else:
+            compte = get_compte_actif(config)
+            st.caption(compte.get("nom", "divertissement45000"))
+
         st.divider()
 
         # Espace disque
@@ -1021,6 +1078,22 @@ def afficher_grille_clips(clips: List[Dict], state, suffixe: str):
                 st.markdown(f"**{clip.get('video_titre', 'Clip')}**")
                 st.caption(f"ID: {clip['id']} | {clip.get('duree', 0):.0f}s | {clip.get('categorie', '?')}")
 
+                # Score viral prédictif
+                try:
+                    from modules.viral_predictor import ViralPredictor
+                    predictor = ViralPredictor(state)
+                    if predictor.est_entraine():
+                        score_viral = predictor.predire(clip, {})
+                        if score_viral is not None:
+                            if score_viral >= 70:
+                                st.success(f"🔥 Score viral : {score_viral}/100")
+                            elif score_viral >= 40:
+                                st.info(f"📊 Score viral : {score_viral}/100")
+                            else:
+                                st.caption(f"📊 Score viral : {score_viral}/100")
+                except Exception:
+                    pass
+
                 # Lecteur vidéo
                 if chemin_final and os.path.exists(chemin_final):
                     try:
@@ -1126,6 +1199,33 @@ def onglet_publication():
     with col4:
         st.metric("Échecs", len(clips_echec))
 
+    # Statut anti-ban
+    if hasattr(scheduler, 'anti_ban'):
+        ab_statut = scheduler.anti_ban.get_statut()
+        if ab_statut["actif"]:
+            col_ab1, col_ab2, col_ab3 = st.columns(3)
+            with col_ab1:
+                pct_use = ab_statut["publications_aujourdhui"] / max(ab_statut["limite"], 1) * 100
+                couleur = "🟢" if pct_use < 70 else ("🟡" if pct_use < 90 else "🔴")
+                st.metric(
+                    f"{couleur} Quota quotidien",
+                    f"{ab_statut['publications_aujourdhui']}/{ab_statut['limite']}",
+                    delta=f"{ab_statut['restant']} restant(s)"
+                )
+            with col_ab2:
+                fen_icon = "🟢" if ab_statut["dans_fenetre"] else "🔴"
+                st.metric(f"{fen_icon} Fenêtre", ab_statut["fenetre"])
+            with col_ab3:
+                if ab_statut["cooldown_actif"]:
+                    st.warning(f"⏸️ Cooldown — {ab_statut['echecs_consecutifs']} échecs consécutifs")
+                    if st.button("🔄 Reset cooldown", key="reset_cooldown"):
+                        scheduler.anti_ban.reset_cooldown()
+                        st.rerun()
+                elif not ab_statut["peut_publier"]:
+                    st.warning(f"🛡️ {ab_statut['raison_blocage']}")
+                else:
+                    st.success("🛡️ Publication autorisée")
+
     # Contrôles de publication
     st.subheader("Contrôles")
     col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
@@ -1158,20 +1258,76 @@ def onglet_publication():
             st.rerun()
 
     with col_ctrl3:
-        intervalle_nouveau = st.number_input(
-            "Intervalle (minutes)",
-            min_value=0.5,
-            max_value=60.0,
-            step=0.5,
-            value=float(scheduler.intervalle_minutes)
+        cfg_pub = config.get("publication", {})
+        mode_sched = cfg_pub.get("mode_scheduling", "fixe")
+        mode_label = "intelligent" if mode_sched == "intelligent" else "fixe"
+        mode_choix = st.radio(
+            "Mode scheduling",
+            ["Intelligent", "Fixe"],
+            index=0 if mode_sched == "intelligent" else 1,
+            horizontal=True,
+            key="mode_sched_radio"
         )
-        if intervalle_nouveau != scheduler.intervalle_minutes:
-            if st.button("Appliquer l'intervalle", use_container_width=True):
-                scheduler.recalculer_horaires(intervalle_nouveau)
+        if mode_choix == "Intelligent":
+            creneaux_str = st.text_input(
+                "Créneaux (HH:MM séparés par virgule)",
+                value=", ".join(cfg_pub.get("creneaux_optimaux", ["12:00", "18:00", "21:00"])),
+                key="creneaux_input"
+            )
+            if st.button("Appliquer les créneaux", use_container_width=True, key="apply_creneaux"):
+                creneaux_list = [c.strip() for c in creneaux_str.split(",") if c.strip()]
+                config["publication"]["mode_scheduling"] = "intelligent"
+                config["publication"]["creneaux_optimaux"] = creneaux_list
+                sauvegarder_config(config)
+                scheduler.recalculer_horaires()
+                st.success(f"Mode intelligent activé : {', '.join(creneaux_list)}")
+                st.rerun()
+        else:
+            intervalle_nouveau = st.number_input(
+                "Intervalle (minutes)",
+                min_value=0.5, max_value=60.0, step=0.5,
+                value=float(scheduler.intervalle_minutes),
+                key="intervalle_fixe"
+            )
+            if st.button("Appliquer l'intervalle", use_container_width=True, key="apply_intervalle"):
+                config["publication"]["mode_scheduling"] = "fixe"
                 config["publication"]["intervalle_minutes"] = intervalle_nouveau
                 sauvegarder_config(config)
-                st.success(f"Intervalle mis à jour : {intervalle_nouveau} min")
+                scheduler.recalculer_horaires(intervalle_nouveau)
+                st.success(f"Mode fixe : {intervalle_nouveau} min entre chaque clip")
                 st.rerun()
+
+    # Vue calendrier (mode intelligent)
+    if cfg_pub.get("mode_scheduling") == "intelligent" and clips_en_attente:
+        st.subheader("📅 Calendrier de publication")
+        import pandas as pd
+        maintenant = datetime.now()
+        # Grouper les clips par jour + créneau
+        planning = {}
+        for e in clips_en_attente:
+            hp_str = e.get("heure_prevue", "")
+            if not hp_str:
+                continue
+            try:
+                hp = datetime.fromisoformat(hp_str)
+                jour_str = hp.strftime("%a %d/%m")
+                heure_str = hp.strftime("%H:%M")
+                key = (jour_str, heure_str)
+                planning[key] = planning.get(key, 0) + 1
+            except (ValueError, TypeError):
+                continue
+
+        if planning:
+            # Construire un tableau jours x créneaux
+            jours = sorted(set(k[0] for k in planning), key=lambda d: list(planning.keys()))
+            heures = sorted(set(k[1] for k in planning))
+            # Limiter à 7 jours
+            jours = jours[:7]
+            data = {}
+            for jour in jours:
+                data[jour] = [planning.get((jour, h), 0) for h in heures]
+            df_cal = pd.DataFrame(data, index=heures)
+            st.dataframe(df_cal, use_container_width=True)
 
     # Prochain à publier
     if clips_en_attente:
@@ -1495,6 +1651,109 @@ def onglet_statistiques():
     else:
         st.info("Aucune vidéo.")
 
+    # Engagement
+    st.subheader("📈 Engagement TikTok")
+    engagement_global = stats.get("engagement_global", {})
+    if engagement_global and engagement_global.get("total_vues", 0) > 0:
+        col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+        with col_e1:
+            st.metric("Total vues", f"{engagement_global.get('total_vues', 0):,}")
+        with col_e2:
+            st.metric("Total likes", f"{engagement_global.get('total_likes', 0):,}")
+        with col_e3:
+            st.metric("Total partages", f"{engagement_global.get('total_partages', 0):,}")
+        with col_e4:
+            st.metric("Total commentaires", f"{engagement_global.get('total_commentaires', 0):,}")
+
+        # Engagement par catégorie
+        par_cat = engagement_global.get("par_categorie", {})
+        if par_cat:
+            import pandas as pd
+            data_cat = [
+                {"Catégorie": cat, "Vues moyennes": d["vues"] // max(d["count"], 1), "Clips": d["count"]}
+                for cat, d in par_cat.items()
+            ]
+            st.write("**Performance par catégorie**")
+            st.dataframe(pd.DataFrame(data_cat), use_container_width=True)
+
+        # Meilleures heures
+        par_heure = engagement_global.get("par_heure", {})
+        if par_heure:
+            import pandas as pd
+            data_h = [
+                {"Heure": f"{int(h):02d}h", "Vues moyennes": d["vues"] // max(d["count"], 1)}
+                for h, d in sorted(par_heure.items(), key=lambda x: int(x[0]))
+            ]
+            st.write("**Meilleures heures de publication**")
+            st.bar_chart(pd.DataFrame(data_h).set_index("Heure"))
+
+        # Top clips
+        try:
+            from modules.engagement_tracker import EngagementTracker
+            tracker = EngagementTracker(st.session_state.config, state)
+            top = tracker.get_top_clips(5)
+            if top:
+                import pandas as pd
+                st.write("**Top clips**")
+                st.dataframe(pd.DataFrame(top), use_container_width=True)
+        except Exception:
+            pass
+    else:
+        st.info("Aucune donnée d'engagement. Les métriques apparaîtront après publication avec l'API TikTok configurée.")
+
+    # Modèle prédictif viral
+    st.subheader("🧠 Modèle Prédictif Viral")
+    try:
+        from modules.viral_predictor import ViralPredictor
+        predictor = ViralPredictor(state)
+        info = predictor.get_info_modele()
+        if info["entraine"]:
+            col_m1, col_m2, col_m3 = st.columns(3)
+            with col_m1:
+                st.metric("R² score", f"{info['r2_score']:.3f}")
+            with col_m2:
+                st.metric("Échantillons", info["nb_echantillons"])
+            with col_m3:
+                if info["date_entrainement"]:
+                    date_str = info["date_entrainement"][:10]
+                    st.metric("Dernier entraînement", date_str)
+        else:
+            st.info(f"Le modèle nécessite au moins 15 clips avec données d'engagement pour s'entraîner.")
+
+        if st.button("🔄 Réentraîner le modèle", key="retrain_viral"):
+            with st.spinner("Entraînement en cours..."):
+                succes = predictor.entrainer()
+            if succes:
+                st.success(f"Modèle entraîné : R²={predictor.r2_score:.3f}, {predictor.nb_echantillons} clips")
+            else:
+                st.warning("Pas assez de données d'engagement pour entraîner le modèle.")
+            st.rerun()
+    except Exception as e:
+        st.warning(f"Module prédictif non disponible : {e}")
+
+    # Hashtags tendance
+    st.subheader("🔥 Hashtags Tendance")
+    try:
+        from modules.trending import get_info_cache, forcer_rafraichissement
+        config = st.session_state.config
+        info_cache = get_info_cache(config)
+        if info_cache["existe"] and info_cache["hashtags"]:
+            st.write(" ".join(info_cache["hashtags"][:10]))
+            age = info_cache.get("age_heures", 0)
+            st.caption(f"Dernière mise à jour : il y a {age:.1f}h")
+        else:
+            st.info("Aucun hashtag trending en cache. Cliquez sur Rafraîchir.")
+        if st.button("🔄 Rafraîchir les hashtags trending", key="refresh_trending"):
+            with st.spinner("Récupération des trending..."):
+                nouveaux = forcer_rafraichissement(config)
+            if nouveaux:
+                st.success(f"{len(nouveaux)} hashtags trending récupérés")
+            else:
+                st.warning("Impossible de récupérer les trending — hashtags par défaut utilisés")
+            st.rerun()
+    except Exception as e:
+        st.warning(f"Module trending non disponible : {e}")
+
 
 # ─── ONGLET 5 : Paramètres ────────────────────────────────────────────────────
 
@@ -1616,6 +1875,85 @@ def onglet_parametres():
                     st.info("Visitez cette URL, connectez-vous à TikTok, puis copiez le code 'code=...' depuis l'URL de redirection")
                 else:
                     st.warning("Entrez d'abord le Client Key")
+
+    # ── Section : Comptes TikTok ─────────────────────────────────────────
+    with st.expander("👥 Comptes TikTok"):
+        comptes = config.get("comptes", [])
+        compte_actif_id = config.get("compte_actif", "principal")
+
+        if comptes:
+            st.write(f"**{len(comptes)} compte(s) configuré(s)**")
+            for i, c in enumerate(comptes):
+                icone = "🟢" if c.get("id") == compte_actif_id else "⚪"
+                st.write(f"{icone} **{c.get('nom', c.get('id'))}** — {c.get('tiktok_username', 'N/A')}")
+        else:
+            st.info("Aucun compte configuré. Ajoutez votre premier compte ci-dessous.")
+
+        st.divider()
+        st.write("**Ajouter un nouveau compte**")
+        new_id = st.text_input("Identifiant (unique, sans espaces)", key="new_compte_id", placeholder="mon_compte_2")
+        new_nom = st.text_input("Nom d'affichage", key="new_compte_nom", placeholder="Mon Compte Sport")
+        new_username = st.text_input("Username TikTok", key="new_compte_user", placeholder="@moncompte")
+
+        if st.button("➕ Ajouter le compte", key="add_compte", use_container_width=True):
+            if not new_id or not new_nom:
+                st.error("L'identifiant et le nom sont requis.")
+            elif any(c.get("id") == new_id for c in comptes):
+                st.error(f"Le compte '{new_id}' existe déjà.")
+            else:
+                new_compte = {
+                    "id": new_id.strip().replace(" ", "_"),
+                    "nom": new_nom.strip(),
+                    "tiktok_username": new_username.strip(),
+                }
+                comptes.append(new_compte)
+                config["comptes"] = comptes
+                sauvegarder_config(config)
+                st.success(f"Compte '{new_nom}' ajouté. Sélectionnez-le dans la sidebar.")
+                st.rerun()
+
+    # ── Section : Anti-Ban ────────────────────────────────────────────────
+    with st.expander("🛡️ Système Anti-Ban"):
+        cfg_ab = config.get("anti_ban", {})
+        ab_actif = st.checkbox("Anti-ban activé", value=cfg_ab.get("actif", True), key="ab_actif")
+        col_ab1, col_ab2 = st.columns(2)
+        with col_ab1:
+            ab_limite = st.number_input(
+                "Limite quotidienne (semaine)",
+                min_value=1, max_value=50,
+                value=cfg_ab.get("limite_quotidienne", 10),
+                key="ab_limite"
+            )
+            fenetre_vals = cfg_ab.get("fenetre_activite", ["08:00", "23:00"])
+            ab_debut = st.text_input("Début fenêtre d'activité", value=fenetre_vals[0] if fenetre_vals else "08:00", key="ab_debut")
+            ab_fin = st.text_input("Fin fenêtre d'activité", value=fenetre_vals[1] if len(fenetre_vals) > 1 else "23:00", key="ab_fin")
+        with col_ab2:
+            ab_weekend = st.checkbox("Pattern weekend (limite réduite)", value=cfg_ab.get("pattern_weekend", True), key="ab_weekend")
+            ab_limite_we = st.number_input(
+                "Limite quotidienne (weekend)",
+                min_value=1, max_value=50,
+                value=cfg_ab.get("limite_quotidienne_weekend", 6),
+                key="ab_limite_we",
+                disabled=not ab_weekend
+            )
+            ab_cooldown = st.number_input(
+                "Cooldown après N échecs consécutifs",
+                min_value=1, max_value=10,
+                value=cfg_ab.get("cooldown_echecs_consecutifs", 2),
+                key="ab_cooldown"
+            )
+        if st.button("💾 Sauvegarder anti-ban", use_container_width=True, key="save_ab"):
+            config["anti_ban"] = {
+                "actif": ab_actif,
+                "limite_quotidienne": ab_limite,
+                "fenetre_activite": [ab_debut, ab_fin],
+                "cooldown_echecs_consecutifs": ab_cooldown,
+                "pattern_weekend": ab_weekend,
+                "limite_quotidienne_weekend": ab_limite_we,
+            }
+            sauvegarder_config(config)
+            st.success("Configuration anti-ban sauvegardée")
+            st.rerun()
 
     # ── Section : Espace disque ────────────────────────────────────────────
     with st.expander("💾 Gestion de l'espace disque"):

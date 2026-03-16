@@ -185,10 +185,14 @@ def generer_hashtags(
     mots_cles = extraire_mots_cles(texte_combine, max_mots=8)
     hashtags_contextuels = [f"#{mot}" for mot in mots_cles if len(mot) > 3][:5]
 
-    # 4. Hashtags tendance génériques
-    hashtags_tendance = [
-        "#trending", "#explore", "#content", "#fypシ", "#pourtoi"
-    ]
+    # 4. Hashtags tendance (temps réel si disponible, sinon fallback)
+    try:
+        from modules.trending import recuperer_trending_hashtags
+        hashtags_tendance = recuperer_trending_hashtags(config)
+    except Exception:
+        hashtags_tendance = [
+            "#trending", "#explore", "#content", "#fypシ", "#pourtoi"
+        ]
 
     # Assembler en évitant les doublons (insensible à la casse)
     tous_hashtags = []

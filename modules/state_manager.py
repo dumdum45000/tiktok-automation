@@ -231,6 +231,113 @@ class StateManager:
         self.sauvegarder()
         return entree
 
+    def ajouter_a_file_intelligente(self, clip_id: str, clip_info: Dict, config: Dict):
+        """
+        Ajoute un clip à la file avec planification intelligente par créneaux.
+        Distribue les clips sur les créneaux optimaux configurés.
+        Fallback sur ajouter_a_file_publication si mode fixe.
+        """
+        cfg_pub = config.get("publication", {})
+        mode = cfg_pub.get("mode_scheduling", "fixe")
+
+        if mode != "intelligent":
+            intervalle = cfg_pub.get("intervalle_minutes", 5.0)
+            return self.ajouter_a_file_publication(clip_id, clip_info, intervalle)
+
+        creneaux = cfg_pub.get("creneaux_optimaux", ["12:00", "18:00", "21:00"])
+        max_par_creneau = cfg_pub.get("max_clips_par_creneau", 3)
+
+        if not creneaux:
+            intervalle = cfg_pub.get("intervalle_minutes", 5.0)
+            return self.ajouter_a_file_publication(clip_id, clip_info, intervalle)
+
+        # Refuser les doublons
+        for entree_existante in self.state["file_publication"]:
+            if entree_existante["clip_id"] == clip_id:
+                statut_ex = entree_existante.get("statut", "")
+                if statut_ex in ("succes", "en_attente", "en_cours"):
+                    logger.warning(f"Clip {clip_id} déjà en file ({statut_ex}) — doublon ignoré")
+                    return entree_existante
+
+        # Parser les créneaux
+        from datetime import time as dtime
+        creneaux_parsed = []
+        for c in creneaux:
+            try:
+                parts = c.strip().split(":")
+                creneaux_parsed.append(dtime(int(parts[0]), int(parts[1])))
+            except (ValueError, IndexError):
+                continue
+
+        if not creneaux_parsed:
+            intervalle = cfg_pub.get("intervalle_minutes", 5.0)
+            return self.ajouter_a_file_publication(clip_id, clip_info, intervalle)
+
+        creneaux_parsed.sort()
+
+        # Trouver le prochain créneau disponible
+        maintenant = datetime.now()
+        heure_prevue = None
+
+        # Compter les clips déjà planifiés par créneau
+        def compter_clips_creneau(jour, creneau_h):
+            """Compte les clips en attente pour un créneau donné."""
+            count = 0
+            for e in self.state["file_publication"]:
+                if e.get("statut") not in ("en_attente", "en_cours"):
+                    continue
+                hp = e.get("heure_prevue", "")
+                if not hp:
+                    continue
+                try:
+                    hp_dt = datetime.fromisoformat(hp)
+                    if (hp_dt.date() == jour
+                            and hp_dt.hour == creneau_h.hour
+                            and hp_dt.minute == creneau_h.minute):
+                        count += 1
+                except (ValueError, TypeError):
+                    continue
+            return count
+
+        # Chercher sur les 14 prochains jours
+        for jour_offset in range(14):
+            jour = (maintenant + timedelta(days=jour_offset)).date()
+            for creneau in creneaux_parsed:
+                slot_dt = datetime.combine(jour, creneau)
+                if slot_dt <= maintenant:
+                    continue
+                if compter_clips_creneau(jour, creneau) < max_par_creneau:
+                    heure_prevue = slot_dt
+                    break
+            if heure_prevue:
+                break
+
+        if heure_prevue is None:
+            # Fallback : 14 jours complets
+            heure_prevue = maintenant + timedelta(days=14)
+
+        entree = {
+            "clip_id": clip_id,
+            "video_id": clip_info.get("video_id"),
+            "chemin_clip": clip_info.get("chemin_final"),
+            "description": clip_info.get("description", ""),
+            "hashtags": clip_info.get("hashtags", []),
+            "statut": "en_attente",
+            "heure_prevue": heure_prevue.isoformat(),
+            "tentatives": 0,
+            "timestamp_ajout": datetime.now().isoformat(),
+            "numero_partie": clip_info.get("numero_partie", 1),
+            "total_parties": clip_info.get("total_parties", 1),
+        }
+        self.state["file_publication"].append(entree)
+        self.state["file_publication"].sort(key=lambda e: (
+            e.get("video_id", ""),
+            e.get("numero_partie", 1)
+        ))
+        self.sauvegarder()
+        logger.info(f"Clip {clip_id} planifié pour {heure_prevue.strftime('%d/%m %H:%M')}")
+        return entree
+
     def mettre_a_jour_statut_publication(self, clip_id: str, statut: str, message: str = ""):
         """Met à jour le statut de publication d'un clip."""
         for entree in self.state["file_publication"]:
