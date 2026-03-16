@@ -1,0 +1,39 @@
+# Identifiants
+.env
+.streamlit/secrets.toml
+
+# Etat du pipeline
+pipeline_state.json
+pipeline_state.json.bak.*
+
+# Logs
+logs/
+
+# Donnees de travail
+data/downloads/
+data/clips/
+data/processed/
+data/published/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store
+._*
+
+# Backups
+*.backup
+
+# Test data
+data/test/
+
+# Music library (too large for Git)
+music_library/
+
+# Backup states
+*.backup_*

@@ -1,0 +1,216 @@
+{
+  "_commentaire": "Fichier de configuration de TikTok Automation — modifier selon vos besoins",
+  "identite": {
+    "nom_chaine": "divertissement45000",
+    "tiktok_username": "@divertissement45000"
+  },
+  "chemins": {
+    "downloads": "data/downloads",
+    "clips": "data/clips",
+    "processed": "data/processed",
+    "published": "data/published",
+    "music_library": "music_library",
+    "logs": "logs",
+    "state_file": "pipeline_state.json",
+    "fonts_dir": "assets/fonts"
+  },
+  "telechargement": {
+    "qualite_preferee": "bestvideo[height>=1080]+bestaudio/best[height>=1080]/bestvideo+bestaudio/best",
+    "format_sortie": "mp4",
+    "max_retries": 3,
+    "timeout_secondes": 120
+  },
+  "analyse": {
+    "duree_clip_max_secondes": 53,
+    "nb_clips_max_par_video": 7,
+    "fenetre_analyse_secondes": 5,
+    "poids_audio": {
+      "musique": 0.8,
+      "sport": 0.4,
+      "humour": 0.6,
+      "autre": 0.5
+    },
+    "poids_video": {
+      "musique": 0.2,
+      "sport": 0.6,
+      "humour": 0.4,
+      "autre": 0.5
+    }
+  },
+  "conversion": {
+    "largeur": 1080,
+    "hauteur": 1920,
+    "saturation": 1.1,
+    "contraste": 1.05,
+    "netteté": 1.0,
+    "flou_arriere_plan_sigma": 20
+  },
+  "watermark": {
+    "texte": "divertissement45000",
+    "opacite": 0.18,
+    "taille_relative": 0.05,
+    "couleur_texte": "white",
+    "couleur_ombre": "black",
+    "police": "Liberation-Sans-Bold",
+    "position": "centre"
+  },
+  "sous_titres": {
+    "modele_whisper": "base",
+    "langue": "en",
+    "seuil_confiance": 0.4,
+    "taille_police_relative": 0.042,
+    "position_bas_pourcent": 0.15,
+    "max_chars_par_ligne": 35,
+    "epaisseur_contour": 3,
+    "seuil_luminosite": 128,
+    "chemin_modele": "/Users/dumdum45/.whisper-cpp/models/ggml-base.en.bin",
+    "chemin_modele_tiny": "/Users/dumdum45/.whisper-cpp/models/ggml-tiny.en.bin"
+  },
+  "musique": {
+    "volume_fond_normal": 0.08,
+    "volume_fond_sans_audio": 0.4,
+    "seuil_silence_db": -40,
+    "fondu_duree_secondes": 1.5
+  },
+  "intro_outro": {
+    "duree_intro_secondes": 3,
+    "duree_outro_secondes": 4,
+    "duree_transition_secondes": 0.5,
+    "intro": {
+      "couleur_fond_hex": "1a1a2e",
+      "couleur_texte_hex": "FFFFFF",
+      "couleur_accent_hex": "e94560",
+      "texte_principal": "divertissement45000",
+      "taille_police": 72
+    },
+    "outro": {
+      "couleur_fond_hex": "16213e",
+      "couleur_texte_hex": "FFFFFF",
+      "texte_principal": "Follow @divertissement45000",
+      "texte_secondaire": "Like & Share",
+      "taille_police_principale": 64,
+      "taille_police_secondaire": 48
+    }
+  },
+  "hashtags": {
+    "base": [
+      "#divertissement45000",
+      "#fyp",
+      "#foryou",
+      "#pourtoi",
+      "#viral"
+    ],
+    "musique": [
+      "#musique",
+      "#music",
+      "#son",
+      "#trending",
+      "#nouveaute"
+    ],
+    "sport": [
+      "#sport",
+      "#sports",
+      "#athlete",
+      "#performance",
+      "#gaming"
+    ],
+    "humour": [
+      "#humour",
+      "#funny",
+      "#drole",
+      "#lol",
+      "#mdr",
+      "#rire"
+    ],
+    "autre": [
+      "#incroyable",
+      "#wow",
+      "#incredible",
+      "#amazing",
+      "#tendance"
+    ]
+  },
+  "publication": {
+    "intervalle_minutes": 0.5,
+    "max_retries": 3,
+    "delai_retry_secondes": 30,
+    "methode": "playwright",
+    "tiktok_credentials": {
+      "email": "",
+      "password": ""
+    },
+    "tiktok_api": {
+      "client_key": "",
+      "client_secret": "",
+      "access_token": "",
+      "refresh_token": ""
+    }
+  },
+  "performance": {
+    "traitement_parallele": true,
+    "max_workers": 2
+  },
+  "disque": {
+    "alerte_espace_go": 1,
+    "nettoyage_auto_jours": 30,
+    "nettoyage_actif": true
+  },
+  "auto_tag": {
+    "mots_cles_musique": [
+      "music",
+      "song",
+      "beat",
+      "track",
+      "album",
+      "remix",
+      "dj",
+      "concert",
+      "rap",
+      "pop",
+      "jazz",
+      "musique",
+      "chanson",
+      "clip",
+      "mv",
+      "official audio",
+      "official video"
+    ],
+    "mots_cles_sport": [
+      "sport",
+      "football",
+      "soccer",
+      "basketball",
+      "tennis",
+      "nba",
+      "nfl",
+      "goal",
+      "match",
+      "game",
+      "championship",
+      "athlete",
+      "run",
+      "gym",
+      "fitness",
+      "boxing",
+      "mma",
+      "ufc"
+    ],
+    "mots_cles_humour": [
+      "funny",
+      "humor",
+      "comedy",
+      "joke",
+      "laugh",
+      "lol",
+      "meme",
+      "prank",
+      "fail",
+      "compilation",
+      "drole",
+      "humour",
+      "rire",
+      "blague"
+    ],
+    "mots_cles_autre": []
+  }
+}
