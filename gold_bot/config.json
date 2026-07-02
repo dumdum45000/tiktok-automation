@@ -1,0 +1,27 @@
+{
+    "market": {
+        "symbol": "GC=F",
+        "symbol_fallback": "XAUUSD=X",
+        "interval": "1d",
+        "history_period": "10y"
+    },
+    "strategy": {
+        "ema_fast": 10,
+        "ema_slow": 30,
+        "rsi_period": 14,
+        "rsi_overbought": 70,
+        "rsi_oversold": 30,
+        "atr_period": 14
+    },
+    "risk": {
+        "capital_initial": 10000.0,
+        "risque_par_trade_pct": 1.0,
+        "stop_atr_multiple": 2.0,
+        "take_profit_atr_multiple": 3.0,
+        "frais_pct": 0.05
+    },
+    "paper": {
+        "intervalle_secondes": 3600,
+        "fichier_etat": "gold_bot/paper_state.json"
+    }
+}

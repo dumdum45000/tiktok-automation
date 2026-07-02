@@ -37,3 +37,7 @@ music_library/
 
 # Backup states
 *.backup_*
+
+# Gold bot - etat du trading papier
+gold_bot/paper_state.json
+

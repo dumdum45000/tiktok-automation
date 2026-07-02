@@ -1,0 +1,5 @@
+# Dépendances du bot de trading sur l'or (module gold_bot)
+# Installation : pip install -r gold_bot/requirements.txt
+yfinance>=0.2.40
+pandas>=2.0.0
+numpy>=1.26.0
